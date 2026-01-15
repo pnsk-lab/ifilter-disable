@@ -1,0 +1,103 @@
+name: Release (Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 1.2.3 or v1.2.3)"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark as prerelease?"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write # releases を作る/asset を上げる
+
+concurrency:
+  group: release-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version + tag
+        id: ver
+        shell: pwsh
+        run: |
+          $inputVersion = "${{ inputs.version }}".Trim()
+          if ([string]::IsNullOrWhiteSpace($inputVersion)) {
+            Write-Error "version is required"
+            exit 1
+          }
+
+          if ($inputVersion.StartsWith("v")) {
+            $tag = $inputVersion
+          } else {
+            $tag = "v$inputVersion"
+          }
+
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Detect built exe
+        id: bin
+        shell: pwsh
+        run: |
+          $cargoToml = Get-Content -Raw -Encoding UTF8 "Cargo.toml"
+          $m = [regex]::Match($cargoToml, '(?m)^\s*name\s*=\s*"(.*?)"\s*$')
+          if (-not $m.Success) {
+            Write-Error "Cannot find package name in Cargo.toml"
+            exit 1
+          }
+          $pkgName = $m.Groups[1].Value
+
+          # '-' → '_' になってるケースもあるので両方探す
+          $candidates = @(
+            "$pkgName.exe",
+            ($pkgName -replace '-', '_') + ".exe"
+          ) | Select-Object -Unique
+
+          $found = $null
+          foreach ($c in $candidates) {
+            $p = Join-Path "target\release" $c
+            if (Test-Path $p) { $found = $p; break }
+          }
+
+          if (-not $found) {
+            Write-Host "Not found in candidates. Listing target\release:"
+            Get-ChildItem "target\release" | Format-Table -AutoSize | Out-String | Write-Host
+            Write-Error "Built exe not found. If this is a workspace or different bin, adjust the workflow."
+            exit 1
+          }
+
+          "exe_path=$found" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.bin.outputs.exe_path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
