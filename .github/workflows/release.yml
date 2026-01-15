@@ -63,13 +63,9 @@ jobs:
         run: |
           $cargoToml = Get-Content -Raw -Encoding UTF8 "Cargo.toml"
           $m = [regex]::Match($cargoToml, '(?m)^\s*name\s*=\s*"(.*?)"\s*$')
-          if (-not $m.Success) {
-            Write-Error "Cannot find package name in Cargo.toml"
-            exit 1
-          }
-          $pkgName = $m.Groups[1].Value
+          if (-not $m.Success) { throw "Cannot find package name in Cargo.toml" }
 
-          # '-' → '_' になってるケースもあるので両方探す
+          $pkgName = $m.Groups[1].Value
           $candidates = @(
             "$pkgName.exe",
             ($pkgName -replace '-', '_') + ".exe"
@@ -80,17 +76,18 @@ jobs:
             $p = Join-Path "target\release" $c
             if (Test-Path $p) { $found = $p; break }
           }
-
           if (-not $found) {
-            Write-Host "Not found in candidates. Listing target\release:"
             Get-ChildItem "target\release" | Format-Table -AutoSize | Out-String | Write-Host
-            Write-Error "Built exe not found. If this is a workspace or different bin, adjust the workflow."
-            exit 1
+            throw "Built exe not found"
           }
 
-          "exe_path=$found" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          # 絶対パス + '/' に正規化（ここが重要）
+          $abs = (Resolve-Path $found).Path
+          $absPosix = $abs -replace '\\','/'
 
-      - name: Create GitHub Release
+          "exe_abs=$absPosix" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Create GitHub Release + Upload exe
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
@@ -98,6 +95,6 @@ jobs:
           prerelease: ${{ inputs.prerelease }}
           generate_release_notes: true
           files: |
-            ${{ steps.bin.outputs.exe_path }}
+            ${{ steps.bin.outputs.exe_abs }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
