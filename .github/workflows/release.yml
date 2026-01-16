@@ -14,7 +14,7 @@ on:
         type: boolean
 
 permissions:
-  contents: write # releases を作る/asset を上げる
+  contents: write
 
 concurrency:
   group: release-windows-${{ github.ref }}
@@ -23,6 +23,9 @@ concurrency:
 jobs:
   build-and-release:
     runs-on: windows-latest
+
+    env:
+      TARGET: x86_64-pc-windows-gnu
 
     steps:
       - name: Checkout
@@ -51,36 +54,108 @@ jobs:
         with:
           targets: x86_64-pc-windows-gnu
 
-      - name: Build (release, GNU)
-        run: cargo build --release --target x86_64-pc-windows-gnu
+      - name: Cache cargo (target-aware)
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          # ターゲットごとに別キャッシュにする（GNU/MSVC混在や将来拡張に強い）
+          key: ${{ runner.os }}-${{ env.TARGET }}-cargo
+          # これがあると target/ 以下のキャッシュ対象がターゲットディレクトリになる
+          workspaces: |
+            . -> target
 
-      - name: Detect built exe
+      - name: Build (release, GNU)
+        shell: pwsh
+        run: |
+          cargo build --release --target $env:TARGET -v
+
+      - name: Detect built exe (and print diagnostics)
         id: bin
         shell: pwsh
         run: |
-          $cargoToml = Get-Content -Raw -Encoding UTF8 "Cargo.toml"
-          $m = [regex]::Match($cargoToml, '(?m)^\s*name\s*=\s*"(.*?)"\s*$')
-          if (-not $m.Success) { throw "Cannot find package name in Cargo.toml" }
+          $target = $env:TARGET
+          $releaseDir = "target\$target\release"
 
-          $pkgName = $m.Groups[1].Value
-          $candidates = @(
-            "$pkgName.exe",
-            ($pkgName -replace '-', '_') + ".exe"
-          ) | Select-Object -Unique
+          Write-Host "== Cargo metadata (bins) =="
+          try {
+            cargo metadata --no-deps --format-version 1 | Out-Host
+          } catch {
+            Write-Host "cargo metadata failed (continuing)"
+          }
+
+          Write-Host "== Directory tree (target) =="
+          if (Test-Path "target") {
+            Get-ChildItem -Path "target" -Recurse -Depth 3 -Force | Select-Object FullName, Length | Format-Table -AutoSize | Out-String | Write-Host
+          } else {
+            Write-Host "target/ does not exist"
+          }
+
+          if (-not (Test-Path $releaseDir)) {
+            throw "Release dir not found: $releaseDir"
+          }
+
+          Write-Host "== Files in $releaseDir =="
+          Get-ChildItem $releaseDir -Force | Format-Table -AutoSize | Out-String | Write-Host
+
+          # 1) まず [[bin]] がある可能性もあるので、cargo metadata から bin 名を拾う（最優先）
+          $binNames = @()
+          try {
+            $meta = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+            foreach ($p in $meta.packages) {
+              foreach ($t in $p.targets) {
+                if ($t.kind -contains "bin") {
+                  $binNames += $t.name
+                }
+              }
+            }
+          } catch {
+            Write-Host "Failed to parse cargo metadata for bin names (fallback to Cargo.toml package name)"
+          }
+          $binNames = $binNames | Select-Object -Unique
+
+          # 2) fallback: Cargo.toml の package.name
+          if ($binNames.Count -eq 0) {
+            $cargoToml = Get-Content -Raw -Encoding UTF8 "Cargo.toml"
+            $m = [regex]::Match($cargoToml, '(?m)^\s*name\s*=\s*"(.*?)"\s*$')
+            if (-not $m.Success) { throw "Cannot find package name in Cargo.toml" }
+            $binNames = @($m.Groups[1].Value)
+          }
+
+          Write-Host "== Candidate bin names =="
+          $binNames | ForEach-Object { Write-Host "- $_" }
+
+          $candidates = @()
+          foreach ($n in $binNames) {
+            $candidates += "$n.exe"
+            $candidates += (($n -replace '-', '_') + ".exe")
+          }
+          $candidates = $candidates | Select-Object -Unique
+
+          Write-Host "== Candidate exe filenames =="
+          $candidates | ForEach-Object { Write-Host "- $_" }
 
           $found = $null
           foreach ($c in $candidates) {
-            $p = Join-Path "target\release" $c
+            $p = Join-Path $releaseDir $c
             if (Test-Path $p) { $found = $p; break }
           }
+
+          # 3) それでも見つからないなら、releaseDir 内の exe を列挙して拾う（最後の手）
           if (-not $found) {
-            Get-ChildItem "target\release" | Format-Table -AutoSize | Out-String | Write-Host
-            throw "Built exe not found"
+            $exeFiles = Get-ChildItem $releaseDir -Filter *.exe -File -Force | Sort-Object Length -Descending
+            if ($exeFiles.Count -eq 0) {
+              throw "No .exe found in $releaseDir"
+            }
+            Write-Host "== Fallback exe list (largest first) =="
+            $exeFiles | Select-Object Name, Length, FullName | Format-Table -AutoSize | Out-String | Write-Host
+            $found = $exeFiles[0].FullName
           }
 
-          # 絶対パス + '/' に正規化（ここが重要）
           $abs = (Resolve-Path $found).Path
           $absPosix = $abs -replace '\\','/'
+
+          Write-Host "== Selected exe =="
+          Write-Host $absPosix
 
           "exe_abs=$absPosix" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
@@ -95,5 +170,3 @@ jobs:
             ${{ steps.bin.outputs.exe_abs }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-
