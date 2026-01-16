@@ -12,6 +12,8 @@ Go to the [Releases](https://github.com/pnsk-lab/ifilter-disable/releases) page 
 
 Just run the `ifilter-disable.exe` file. You may get a warning from Windows Defender. If so, you have to allow it to run.
 
+Put the executable file on `shell:startup` to enable auto-start when Windows starts. 
+
 ## Special Thanks
 
 Thanks to [k-kozika](https://github.com/k-kozika) and [skikozou](https://github.com/skikozou), who helped me with reverse engineering the DigitalArts@Cloud.
@@ -20,3 +22,4 @@ Thanks to [k-kozika](https://github.com/k-kozika) and [skikozou](https://github.
 
 * This tool depends on a unstable bug in DigitalArts@Cloud. This means that this tool may stop working if DigitalArts updates their software to fix the bug.
 * Use this tool at your own risk. Developers of this tool are not responsible for any damage caused by using this tool.
+
