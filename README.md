@@ -14,6 +14,8 @@ Just run the `ifilter-disable.exe` file. You may get a warning from Windows Defe
 
 Put the executable file on `shell:startup` to enable auto-start when Windows starts. 
 
+https://github.com/user-attachments/assets/0d9858de-12d6-475c-8868-eb1fe300ac69
+
 ## Special Thanks
 
 Thanks to [k-kozika](https://github.com/k-kozika) and [skikozou](https://github.com/skikozou), who helped me with reverse engineering the DigitalArts@Cloud.
@@ -22,4 +24,5 @@ Thanks to [k-kozika](https://github.com/k-kozika) and [skikozou](https://github.
 
 * This tool depends on a unstable bug in DigitalArts@Cloud. This means that this tool may stop working if DigitalArts updates their software to fix the bug.
 * Use this tool at your own risk. Developers of this tool are not responsible for any damage caused by using this tool.
+
 
